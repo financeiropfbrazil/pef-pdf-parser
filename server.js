@@ -217,6 +217,24 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
       return res.status(400).json({ error: 'pdf_base64 is required' });
     }
 
+    // Clean pdf_base64: some attachments come with HTTP response headers prepended
+    // Detect by decoding first bytes — real PDF starts with %PDF (JVBERi in base64)
+    let cleanPdfBase64 = pdf_base64;
+    if (!pdf_base64.startsWith('JVBERi')) {
+      // Try to find the PDF start marker in the decoded content
+      const rawBuffer = Buffer.from(pdf_base64, 'base64');
+      const rawString = rawBuffer.toString('binary');
+      const pdfStart = rawString.indexOf('%PDF');
+      if (pdfStart > 0) {
+        // Re-encode only the PDF part
+        const pdfOnly = rawBuffer.slice(pdfStart);
+        cleanPdfBase64 = pdfOnly.toString('base64');
+        console.log(`Cleaned HTTP headers: removed ${pdfStart} bytes before %PDF`);
+      } else {
+        console.log('Warning: Could not find %PDF marker in content');
+      }
+    }
+
     // Check if record exists with XML already parsed
     const { data: existing } = await supabase
       .from('email_notas_fiscais')
@@ -242,12 +260,8 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
       });
     }
 
-    // Debug: log first 100 chars of pdf_base64
-    console.log('PDF base64 starts with:', pdf_base64?.substring(0, 100));
-    console.log('PDF base64 length:', pdf_base64?.length);
-    
     // Parse PDF text
-    const pdfBuffer = Buffer.from(pdf_base64, 'base64');
+    const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
 
