@@ -47,8 +47,8 @@ function parseDanfeText(text) {
 
   // 1. Chave de acesso (44 digits, may have spaces)
   const chavePatterns = [
-    /CHAVE\s*DE\s*ACESSO[:\s]*\n?([\d\s]{44,60})/i,
     /(\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4})/,
+    /CHAVE\s*DE\s*ACESSO[:\s]*\n?([\d\s]{44,60})/i,
     /(\d{44})/,
   ];
   for (const pat of chavePatterns) {
@@ -74,91 +74,129 @@ function parseDanfeText(text) {
     else if (mod === '57') result.modelo = 'cte_57';
   }
 
-  // 2. Emitente nome
+  // 2. Emitente nome — look for "RECEBEMOS DE ... OS PRODUTOS" pattern (most reliable)
+  //    or the company name block before DANFE section
   const emitPatterns = [
-    /RAZ[ÃA]O\s*SOCIAL[:\s]*\n?\s*(.+)/i,
+    /RECEBEMOS\s+DE\s+(.+?)\s+OS\s+PRODUTOS/i,
+    // Fallback: text block between address and "DANFE" or between header lines
+    /CEP[:\s]*\d{5}[\-\s]?\d{3}\n(.+?)(?:\n\d|\nDANFE|\nNATUREZA)/is,
   ];
   for (const pat of emitPatterns) {
     const m = clean.match(pat);
     if (m && m[1].trim().length > 3) {
-      result.emitente_nome = m[1].trim().substring(0, 100);
+      // Clean up: remove line breaks, extra spaces
+      let nome = m[1].replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      // Remove trailing LTDA duplicates or junk
+      result.emitente_nome = nome.substring(0, 100);
       break;
     }
   }
 
-  // 3. Destinatario CNPJ (from the DESTINATÁRIO section)
-  const destCnpjPatterns = [
-    /DESTINAT[ÁA]RIO[\s\S]{0,500}?CNPJ[\/\s]*CPF[:\s]*\n?\s*([\d.\/\-]+)/i,
-    /DESTINAT[ÁA]RIO[\s\S]{0,500}?([\d]{2}\.[\d]{3}\.[\d]{3}\/[\d]{4}-[\d]{2})/i,
-  ];
-  for (const pat of destCnpjPatterns) {
-    const m = clean.match(pat);
-    if (m) {
-      result.destinatario_cnpj = m[1].replace(/[.\/-]/g, '');
-      if (result.destinatario_cnpj.length === 14) break;
-      result.destinatario_cnpj = null;
+  // 3. Destinatario — extract from the DESTINATÁRIO section
+  const destSection = clean.match(/DESTINAT[ÁA]RIO[\s\S]*?FATURA/i);
+  if (destSection) {
+    const destText = destSection[0];
+    
+    // Destinatario CNPJ: look for XX.XXX.XXX/XXXX-XX pattern in dest section
+    const cnpjMatch = destText.match(/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/);
+    if (cnpjMatch) {
+      result.destinatario_cnpj = cnpjMatch[1].replace(/[.\/-]/g, '');
+    }
+
+    // Destinatario nome: find line containing the CNPJ (company name is on same line before CNPJ)
+    if (cnpjMatch) {
+      const cnpjLine = destText.split('\n').find(l => l.includes(cnpjMatch[1]));
+      if (cnpjLine) {
+        let nome = cnpjLine.replace(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}.*$/, '').trim();
+        if (nome.length > 5) {
+          result.destinatario_nome = nome.substring(0, 100);
+        }
+      }
+    }
+    
+    // Fallback: look for known company names
+    if (!result.destinatario_nome) {
+      const knownMatch = destText.match(/(PRODUCTS\s+AND\s+FEATURES[^\n]*|BIOCOLLAGEN[^\n]*)/i);
+      if (knownMatch) {
+        let nome = knownMatch[1].replace(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}.*$/, '').trim();
+        result.destinatario_nome = nome.substring(0, 100);
+      }
     }
   }
 
-  // 4. Destinatario nome
-  const destNomePatterns = [
-    /DESTINAT[ÁA]RIO[\s\S]{0,200}?NOME[\/\s]*RAZ[ÃA]O\s*SOCIAL[:\s]*\n?\s*(.+)/i,
-    /DESTINAT[ÁA]RIO[\s\S]{0,200}?\n\s*(PRODUCTS\s+AND\s+FEATURES[^\n]+)/i,
-    /DESTINAT[ÁA]RIO[\s\S]{0,200}?\n\s*(BIOCOLLAGEN[^\n]+)/i,
-  ];
-  for (const pat of destNomePatterns) {
-    const m = clean.match(pat);
-    if (m && m[1].trim().length > 3) {
-      result.destinatario_nome = m[1].trim().substring(0, 100);
-      break;
-    }
-  }
-
-  // 5. Data emissão
+  // 4. Data emissão — look for dates in DD/MM/YYYY format near "EMISSÃO"
   const dataPatterns = [
-    /DATA\s*(?:DA|DE)\s*EMISS[ÃA]O[:\s]*\n?\s*(\d{2}\/\d{2}\/\d{4})/i,
-    /EMISS[ÃA]O[:\s]*(\d{2}\/\d{2}\/\d{4})/i,
+    // Date right after or near "DATA DA EMISSÃO" or "DATA DE EMISSÃO"
+    /(\d{2}\/\d{2}\/\d{4})/,  // First date found is usually emissão
   ];
-  for (const pat of dataPatterns) {
-    const m = clean.match(pat);
-    if (m) {
-      const parts = m[1].split('/');
+  // More specific: find date in the destinatario section (it's on the same line as CNPJ)
+  const dataMatch = clean.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\s+(\d{2}\/\d{2}\/\d{4})/);
+  if (dataMatch) {
+    const parts = dataMatch[1].split('/');
+    if (parts.length === 3) {
+      result.data_emissao = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+  }
+  // Fallback: look for PROTOCOLO date
+  if (!result.data_emissao) {
+    const protMatch = clean.match(/PROTOCOLO[\s\S]*?(\d{2}\/\d{2}\/\d{4})/i);
+    if (protMatch) {
+      const parts = protMatch[1].split('/');
       if (parts.length === 3) {
         result.data_emissao = `${parts[2]}-${parts[1]}-${parts[0]}`;
       }
-      break;
     }
   }
 
-  // 6. Valor total
-  const valorPatterns = [
-    /VALOR\s*TOTAL\s*DA\s*NOTA[:\s]*\n?\s*([\d.,]+)/i,
-    /VALOR\s*TOTAL\s*(?:NF|NFCOM)[:\s]*\n?\s*R?\$?\s*([\d.,]+)/i,
-  ];
-  for (const pat of valorPatterns) {
-    const m = clean.match(pat);
-    if (m) {
-      result.valor_total = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
-      break;
+  // 5. Natureza da operação — line after "NATUREZA DA OPERAÇÃO"
+  const natOpMatch = clean.match(/NATUREZA\s*DA\s*OPERA[ÇC][ÃA]O\n(.+)/i);
+  if (natOpMatch) {
+    const natOp = natOpMatch[1].trim();
+    // Make sure it's not a header label
+    if (natOp.length > 2 && !/^INSCRI/i.test(natOp)) {
+      result.natureza_operacao = natOp.substring(0, 100);
     }
   }
 
-  // 7. Valor produtos
-  const valorProdMatch = clean.match(/VALOR\s*TOTAL\s*DOS\s*PRODUTOS[:\s]*\n?\s*([\d.,]+)/i);
-  if (valorProdMatch) {
-    result.valor_produtos = parseFloat(valorProdMatch[1].replace(/\./g, '').replace(',', '.'));
+  // 6. Valor total — "VALOR TOTAL DA NOTA" followed by value
+  //    Values may be glued: "0,000,000,000,000,00 1.560,00"
+  //    The last number on that line/section is usually the total
+  const valorSection = clean.match(/VALOR\s*TOTAL\s*DA\s*NOTA\n([^\n]+)/i);
+  if (valorSection) {
+    // Find all number patterns (Brazilian format: 1.560,00)
+    const numbers = valorSection[1].match(/\d[\d.,]*\d/g);
+    if (numbers) {
+      // Last number is the total
+      const lastNum = numbers[numbers.length - 1];
+      const val = parseFloat(lastNum.replace(/\./g, '').replace(',', '.'));
+      if (val > 0) result.valor_total = val;
+    }
+  }
+  // Fallback
+  if (!result.valor_total) {
+    const valorFallback = clean.match(/VALOR\s*TOTAL\s*(?:DA\s*NOTA|NF|NFCOM)[\s\S]*?([\d]+\.[\d]{3},[\d]{2}|[\d]+,[\d]{2})/i);
+    if (valorFallback) {
+      const val = parseFloat(valorFallback[1].replace(/\./g, '').replace(',', '.'));
+      if (val > 0) result.valor_total = val;
+    }
   }
 
-  // 8. ICMS
-  const icmsMatch = clean.match(/VALOR\s*(?:DO\s*)?ICMS[:\s]*\n?\s*([\d.,]+)/i);
+  // 7. Valor produtos — same approach, find last number after header
+  const valorProdSection = clean.match(/VALOR\s*TOTAL\s*DOS\s*PRODUTOS[\s\S]*?\n([^\n]+)/i);
+  if (valorProdSection) {
+    const numbers = valorProdSection[1].match(/\d[\d.,]*\d/g);
+    if (numbers) {
+      const lastNum = numbers[numbers.length - 1];
+      const val = parseFloat(lastNum.replace(/\./g, '').replace(',', '.'));
+      if (val > 0) result.valor_produtos = val;
+    }
+  }
+
+  // 8. ICMS — "VALOR DO ICMS" (not "VALOR DO ICMS ST")
+  const icmsMatch = clean.match(/VALOR\s*DO\s*ICMS(?!\s*ST)\s*[\n\s]*([\d.,]+)/i);
   if (icmsMatch) {
-    result.valor_icms = parseFloat(icmsMatch[1].replace(/\./g, '').replace(',', '.'));
-  }
-
-  // 9. Natureza da operação
-  const natOpMatch = clean.match(/NATUREZA\s*DA\s*OPERA[ÇC][ÃA]O[:\s]*\n?\s*(.+)/i);
-  if (natOpMatch && natOpMatch[1].trim().length > 2) {
-    result.natureza_operacao = natOpMatch[1].trim().substring(0, 100);
+    const val = parseFloat(icmsMatch[1].replace(/\./g, '').replace(',', '.'));
+    if (val > 0) result.valor_icms = val;
   }
 
   return result;
