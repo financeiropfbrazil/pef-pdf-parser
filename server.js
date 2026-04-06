@@ -264,6 +264,8 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
     const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
+    console.log('Parsed text (first 500 chars):', pdfData.text?.substring(0, 500));
+console.log('Parsed result:', JSON.stringify(parsed));
 
     // Build record
     const record = {
