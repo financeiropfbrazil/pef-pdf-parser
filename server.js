@@ -242,6 +242,10 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
       });
     }
 
+    // Debug: log first 100 chars of pdf_base64
+    console.log('PDF base64 starts with:', pdf_base64?.substring(0, 100));
+    console.log('PDF base64 length:', pdf_base64?.length);
+    
     // Parse PDF text
     const pdfBuffer = Buffer.from(pdf_base64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
