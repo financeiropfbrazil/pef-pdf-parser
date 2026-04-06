@@ -264,9 +264,8 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
     const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
-    console.log('Parsed text (first 500 chars):', pdfData.text?.substring(0, 500));
-console.log('Parsed result:', JSON.stringify(parsed));
-
+    const valorIdx = pdfData.text.indexOf('VALOR TOTAL');
+console.log('VALOR section:', pdfData.text.substring(valorIdx, valorIdx + 300));
     // Build record
     const record = {
       email_message_id,
