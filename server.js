@@ -171,15 +171,21 @@ function parseDanfeText(text) {
   }
 
   // Format B: NF-e DANFE — "VALOR TOTAL DA NOTA" on one line, values on next line
-  // Values may be glued: "0,000,000,000,000,00 1.560,00"
+  // Values may be glued: "0,000,000,000,000,001.560,00"
+  // Use Brazilian currency pattern: N.NNN,NN or NNN,NN
   if (!result.valor_total) {
     const notaSection = clean.match(/VALOR\s*TOTAL\s*DA\s*NOTA\n([^\n]+)/i);
     if (notaSection) {
-      const numbers = notaSection[1].match(/\d[\d.,]*\d/g);
-      if (numbers) {
-        const lastNum = numbers[numbers.length - 1];
-        const val = parseFloat(lastNum.replace(/\./g, '').replace(',', '.'));
-        if (val > 0) result.valor_total = val;
+      const brNumbers = notaSection[1].match(/\d{1,3}(?:\.\d{3})*,\d{2}/g);
+      if (brNumbers) {
+        // Last non-zero value is the total
+        for (let i = brNumbers.length - 1; i >= 0; i--) {
+          const val = parseFloat(brNumbers[i].replace(/\./g, '').replace(',', '.'));
+          if (val > 0) {
+            result.valor_total = val;
+            break;
+          }
+        }
       }
     }
   }
@@ -285,12 +291,6 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
     const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
-    // Debug: print full text for this PDF
-    if (pdf_filename && pdf_filename.includes('DIDONE')) {
-      console.log('=== FULL TEXT COFFEE SHOP ===');
-      console.log(pdfData.text);
-      console.log('=== END ===');
-    }
 
     // Build record
     const record = {
