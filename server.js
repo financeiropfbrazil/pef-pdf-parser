@@ -285,6 +285,12 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
     const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
+    // Debug: print full text for this PDF
+    if (pdf_filename && pdf_filename.includes('DIDONE')) {
+      console.log('=== FULL TEXT COFFEE SHOP ===');
+      console.log(pdfData.text);
+      console.log('=== END ===');
+    }
 
     // Build record
     const record = {
