@@ -158,25 +158,46 @@ function parseDanfeText(text) {
     }
   }
 
-  // 6. Valor total — "VALOR TOTAL DA NOTA" followed by value
-  //    Values may be glued: "0,000,000,000,000,00 1.560,00"
-  //    The last number on that line/section is usually the total
-  const valorSection = clean.match(/VALOR\s*TOTAL\s*DA\s*NOTA\n([^\n]+)/i);
-  if (valorSection) {
-    // Find all number patterns (Brazilian format: 1.560,00)
-    const numbers = valorSection[1].match(/\d[\d.,]*\d/g);
-    if (numbers) {
-      // Last number is the total
-      const lastNum = numbers[numbers.length - 1];
-      const val = parseFloat(lastNum.replace(/\./g, '').replace(',', '.'));
+  // 6. Valor total — multiple formats depending on document type
+  
+  // Format A: NFCOM — "VALOR TOTAL NFCOM...R$ 399,00R$ 399,00..."
+  // The first R$ value after "VALOR TOTAL NFCOM" is the total
+  if (!result.valor_total) {
+    const nfcomMatch = clean.match(/VALOR\s*TOTAL\s*NFCOM[\s\S]*?R\$\s*([\d.,]+)/i);
+    if (nfcomMatch) {
+      const val = parseFloat(nfcomMatch[1].replace(/\./g, '').replace(',', '.'));
       if (val > 0) result.valor_total = val;
     }
   }
-  // Fallback
+
+  // Format B: NF-e DANFE — "VALOR TOTAL DA NOTA" on one line, values on next line
+  // Values may be glued: "0,000,000,000,000,00 1.560,00"
   if (!result.valor_total) {
-    const valorFallback = clean.match(/VALOR\s*TOTAL\s*(?:DA\s*NOTA|NF|NFCOM)[\s\S]*?([\d]+\.[\d]{3},[\d]{2}|[\d]+,[\d]{2})/i);
-    if (valorFallback) {
-      const val = parseFloat(valorFallback[1].replace(/\./g, '').replace(',', '.'));
+    const notaSection = clean.match(/VALOR\s*TOTAL\s*DA\s*NOTA\n([^\n]+)/i);
+    if (notaSection) {
+      const numbers = notaSection[1].match(/\d[\d.,]*\d/g);
+      if (numbers) {
+        const lastNum = numbers[numbers.length - 1];
+        const val = parseFloat(lastNum.replace(/\./g, '').replace(',', '.'));
+        if (val > 0) result.valor_total = val;
+      }
+    }
+  }
+
+  // Format C: R$ prefix — look for "R$ X.XXX,XX" patterns near TOTAL
+  if (!result.valor_total) {
+    const rMatch = clean.match(/TOTAL[\s\S]{0,100}?R\$\s*([\d]+[.,][\d.,]+)/i);
+    if (rMatch) {
+      const val = parseFloat(rMatch[1].replace(/\./g, '').replace(',', '.'));
+      if (val > 0) result.valor_total = val;
+    }
+  }
+
+  // Format D: Fallback — any "VALOR TOTAL" followed by a number
+  if (!result.valor_total) {
+    const fallback = clean.match(/VALOR\s*TOTAL[\s\S]*?([\d]+\.[\d]{3},[\d]{2}|[\d]+,[\d]{2})/i);
+    if (fallback) {
+      const val = parseFloat(fallback[1].replace(/\./g, '').replace(',', '.'));
       if (val > 0) result.valor_total = val;
     }
   }
@@ -264,8 +285,7 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
     const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
-    const valorIdx = pdfData.text.indexOf('VALOR TOTAL');
-console.log('VALOR section:', pdfData.text.substring(valorIdx, valorIdx + 300));
+
     // Build record
     const record = {
       email_message_id,
