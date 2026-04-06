@@ -1,0 +1,15 @@
+{
+  "name": "pef-pdf-parser",
+  "version": "1.0.0",
+  "description": "PDF DANFE parser for P&F Financial Hub",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pdf-parse": "^1.1.1",
+    "@supabase/supabase-js": "^2.39.0",
+    "cors": "^2.8.5"
+  }
+}
