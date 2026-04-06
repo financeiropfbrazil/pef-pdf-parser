@@ -270,12 +270,24 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
       .maybeSingle();
 
     if (existing && existing.tem_xml) {
-      // XML already parsed, just update PDF info
+      // XML already parsed — save PDF to storage and update record
+      let pdfStoragePath = null;
+      try {
+        const pdfBuffer = Buffer.from(cleanPdfBase64, 'base64');
+        const chave = existing.id;
+        const pdfPath = `pdf/${chave}.pdf`;
+        const { error: uploadError } = await supabase.storage
+          .from('email-nfe-attachments')
+          .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+        if (!uploadError) pdfStoragePath = pdfPath;
+      } catch (_e) { /* non-blocking */ }
+
       await supabase
         .from('email_notas_fiscais')
         .update({
           tem_pdf: true,
           pdf_filename: pdf_filename || null,
+          pdf_storage_path: pdfStoragePath,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existing.id);
@@ -292,6 +304,17 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
     const pdfData = await pdfParse(pdfBuffer);
     const parsed = parseDanfeText(pdfData.text);
 
+    // Save PDF to Supabase Storage
+    let pdfStoragePath = null;
+    try {
+      const chave = parsed.chave_acesso || `unknown_${Date.now()}`;
+      const pdfPath = `pdf/${chave}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from('email-nfe-attachments')
+        .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+      if (!uploadError) pdfStoragePath = pdfPath;
+    } catch (_e) { /* non-blocking */ }
+
     // Build record
     const record = {
       email_message_id,
@@ -303,6 +326,7 @@ app.post('/api/parse-danfe-pdf', async (req, res) => {
       tem_xml: false,
       tem_pdf: true,
       pdf_filename: pdf_filename || null,
+      pdf_storage_path: pdfStoragePath,
       status: 'pendente',
       chave_acesso: parsed.chave_acesso,
       numero_nota: parsed.numero_nota,
